@@ -1,0 +1,106 @@
+# Builds the VULNREPO image from this Dockerfile and pushes it to
+# https://hub.docker.com/r/kac89/vulnrepo
+#
+# Runs when:
+#   - this repo's master changes (Dockerfile / nginx.conf edits)
+#   - kac89/vulnrepo finishes a master build and fires a repository_dispatch
+#   - you click "Run workflow" in the Actions tab
+#
+# Required repository secrets:
+#   DOCKERHUB_USERNAME  kac89
+#   DOCKERHUB_TOKEN     Docker Hub personal access token (Read & Write)
+
+name: DOCKER PUBLISH
+
+on:
+  push:
+    branches: [ master ]
+  repository_dispatch:
+    types: [ app-build-prod ]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-publish
+  cancel-in-progress: false
+
+env:
+  IMAGE: kac89/vulnrepo
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve app revision
+        id: rev
+        env:
+          PAYLOAD_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          APP_SHA="$PAYLOAD_SHA"
+          # only accept a well-formed sha from the dispatch payload
+          case "$APP_SHA" in
+            *[!0-9a-fA-F]* | "") APP_SHA="" ;;
+          esac
+          if [ -z "$APP_SHA" ]; then
+            APP_SHA=$(curl -sfL -H 'Accept: application/vnd.github+json' \
+              https://api.github.com/repos/kac89/vulnrepo/commits/master | jq -r '.sha')
+          fi
+          echo "sha=$APP_SHA" >> "$GITHUB_OUTPUT"
+          echo "short=$(echo "$APP_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "Building image for vulnrepo @ $APP_SHA"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # the build stage downloads vulnrepo-build-prod/master.zip, so a cached
+          # layer would ship a stale app - never cache this image
+          no-cache: true
+          provenance: false
+          build-args: |
+            BUILD_REF=${{ steps.rev.outputs.sha }}
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:sha-${{ steps.rev.outputs.short }}
+          labels: |
+            org.opencontainers.image.title=VULNREPO
+            org.opencontainers.image.description=VULNREPO - Free vulnerability report generator and repository
+            org.opencontainers.image.url=https://vulnrepo.com
+            org.opencontainers.image.source=https://github.com/kac89/vulnrepo-docker
+            org.opencontainers.image.revision=${{ steps.rev.outputs.sha }}
+            org.opencontainers.image.created=${{ steps.rev.outputs.created }}
+            org.opencontainers.image.licenses=GPL-3.0
+
+      - name: Smoke test the image
+        run: |
+          docker run -d --name vulnrepo-smoke -p 8080:80 ${{ env.IMAGE }}:latest
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:8080/ | grep -qi vuln; then
+              echo "index.html served OK"
+              docker rm -f vulnrepo-smoke
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::container did not serve index.html"
+          docker logs vulnrepo-smoke
+          exit 1
