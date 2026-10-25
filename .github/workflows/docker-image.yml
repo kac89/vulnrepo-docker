@@ -2,7 +2,7 @@
 # https://hub.docker.com/r/kac89/vulnrepo
 #
 # Runs when:
-#   - this repo's master changes (Dockerfile / nginx.conf edits)
+#   - this repo's main changes (Dockerfile / nginx.conf edits)
 #   - kac89/vulnrepo finishes a master build and fires a repository_dispatch
 #   - you click "Run workflow" in the Actions tab
 #
@@ -14,7 +14,7 @@ name: DOCKER PUBLISH
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   repository_dispatch:
     types: [ app-build-prod ]
   workflow_dispatch:
