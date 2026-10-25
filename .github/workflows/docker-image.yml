@@ -80,7 +80,7 @@ jobs:
             BUILD_REF=${{ steps.rev.outputs.sha }}
           tags: |
             ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:sha-${{ steps.rev.outputs.short }}
+          # ${{ env.IMAGE }}:sha-${{ steps.rev.outputs.short }}
           labels: |
             org.opencontainers.image.title=VULNREPO
             org.opencontainers.image.description=VULNREPO - Free vulnerability report generator and repository
